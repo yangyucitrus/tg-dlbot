@@ -11,24 +11,22 @@ import threading
 import concurrent.futures
 
 # 全局变量
-bot_token = ""  # 替换为您的Telegram Bot的令牌
-download_path = "/home/tgmedia"  # 下载文件的本地保存路径，若开启rclone上传，即文件中转地址
-enable_upload = True  # 是否开启rclone上传，根据需要设置为True或False，rclone上传默认为"move"，即rclone上传后会删除本地文件
-remote_path = "盘符:路径"  # rclone上传文件的远程路径
-api_base_url = "http://127.0.0.1:8081/bot" # 实际的Telegram Bot Api请求地址
-logging_file = "/tmp/tg-auto-install-bot.log" # 日志记录文件
-allowed_user_ids = [aaa,bbb,-ccc]  # 允许的用户或者群组ID列表，多个用英文逗号隔开
+bot_token = ""  # Telegram Bot的令牌
+download_path = "/root/downloads/TG"  # 下载文件的本地保存路径
+remote_url = "https://"  # alist等远程云盘目录
+api_base_url = "http://127.0.0.1:8088/bot"  # 实际自托管Telegram Bot Api
+logging_file = "/tmp/tg-auto-install-bot.log"  # 日志
+allowed_user_ids = []  # 允许的用户或者群组ID列表，多个逗号隔开
 cleanup_interval = 3600  # 定义清理旧数据的时间间隔（以秒为单位）
-remote_url = "https://xxx.com/odrive" ## alist等列表程序，远程云盘对应remote_path的目录
 
 media_group_id_start_count = {}
 media_group_id_end_count = {}
 
 # 创建线程池
-pool = concurrent.futures.ThreadPoolExecutor(max_workers=3) # 处理tg文件时的并发线程数，默认为3
+pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)  # 并发线程数
 
 # 配置日志输出
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s',filename=logging_file)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', filename=logging_file)
 logger = logging.getLogger(__name__)
 
 def create_directory(directory):
@@ -58,20 +56,18 @@ def send_reply(chat_id, message_id, text, time_sleep, link_url):
         "disable_web_page_preview": "true"
     }
     response = requests.get(url, params=params)
-    
+
     if response.status_code == 200:
         data = response.json()
         reply_message_id = data["result"]["message_id"]  # 提取回复消息的 message_id
         logger.info(f"tg回复消息id {message_id} 成功！")
-        
-        #删除回复的消息
+
+        # 删除回复的消息
         thread = threading.Thread(target=delete_latest_message, args=(chat_id, reply_message_id, time_sleep))
         thread.start()
     else:
         logger.info(f"tg回复消息id {message_id} 失败！")
-    
-   
-   
+
 def delete_latest_message(chat_id, message_id, time_sleep):
     time.sleep(time_sleep)
     url = f"{api_base_url}{bot_token}/deleteMessage"
@@ -81,9 +77,9 @@ def delete_latest_message(chat_id, message_id, time_sleep):
     }
     response = requests.get(url, params=params)
     if response.status_code == 200:
-        logger.info("成功删除消息{message_id}！")
+        logger.info(f"成功删除消息 {message_id}！")
     else:
-        logger.info("删除最新的消息{message_id}！")
+        logger.info(f"删除消息 {message_id} 失败！")
 
 def generate_filename(file_name, file_size, caption, file_getpath):
     # 生成新的文件名
@@ -100,14 +96,11 @@ def generate_filename(file_name, file_size, caption, file_getpath):
     else:
         new_file_name = os.path.splitext(file_name)[0]  # 去除原始文件名的后缀
 
-
     new_file_name = f"{new_file_name}{file_size_str}{file_extension}"
-    return new_file_name    
+    return new_file_name
 
 def download_file(url, file_type, file_name, caption, file_getpath, message_id, chat_id, media_group_id, file_size):
-       
     total_size = file_size
-
     file_name_with_size = generate_filename(file_name, total_size, caption, file_getpath)
     logger.info(f"文件重命名为：{file_name_with_size}")
 
@@ -122,54 +115,32 @@ def download_file(url, file_type, file_name, caption, file_getpath, message_id, 
     create_directory(sub_directory)
 
     file_path = os.path.join(sub_directory, file_name_with_size)
-
-    os.link(file_getpath, file_path) 
+    os.link(file_getpath, file_path)
     logger.info(f"{file_getpath},{file_path}")
-    
-    if enable_upload:
-        # 构造远程路径
-        remote_file_path = f"{remote_path}/{file_type}"
-            
-        # 调用rclone命令上传文件
-        # 引用路径以处理空格和特殊字符
-        quoted_file_path = shlex.quote(file_path)
-        quoted_remote_file_path = shlex.quote(remote_file_path)
 
-        logger.info(f"rclone本地地址:{quoted_file_path}")
-        logger.info(f"rclone远程地址:{quoted_remote_file_path}")
-            
-        rclone_command = f"rclone move {quoted_file_path} {quoted_remote_file_path} -P"
-        result = subprocess.run(rclone_command, shell=True)
-        
-        time_sleep = 600
-        link_url = remote_url + "/" + file_type + "/" + file_name_with_size
-        if media_group_id:
-            link_url = remote_url + "/" + file_type
-            if media_group_id in media_group_id_end_count:
-                media_group_id_end_count[media_group_id] += 1
-            else:
-                media_group_id_end_count[media_group_id] = 1
+    time_sleep = 600
+    link_url = remote_url + "/" + file_type + "/" + file_name_with_size
 
-            media_group_id_start_time = media_group_id_start_count[media_group_id] #总共次数
-            media_group_id_end_time = media_group_id_end_count[media_group_id] #已经出现次数
-            logging.info("总共 {media_group_id_start_time} 已经{media_group_id_end_time}")
-            
-            if media_group_id_start_time == media_group_id_end_time:
-                logging.info(f"{media_group_id_end_time}个文件全部上传完成")
-                reply_text = f"{media_group_id_end_time}个文件全部上传完成\n\n<a href='{link_url}'>文件链接</a>"
-                send_reply(chat_id, message_id, reply_text, time_sleep, link_url)   
+    if media_group_id:
+        if media_group_id in media_group_id_end_count:
+            media_group_id_end_count[media_group_id] += 1
         else:
-            if result.returncode == 0:
-                logging.info("文件 {file_name_with_size} 上传完成")
-                reply_text = f"文件 {file_name_with_size} 上传完成\n\n<a href='{link_url}'>文件链接</a>"
-                send_reply(chat_id, message_id, reply_text, time_sleep, link_url)
-            else:
-                logging.error(f"文件 {file_name_with_size} 上传失败，返回码：{result.returncode}")
-                reply_text = f"文件 {file_name_with_size} 上传失败，返回码：{result.returncode}"
-                send_reply(chat_id, message_id, reply_text, time_sleep, link_url)
-             
+            media_group_id_end_count[media_group_id] = 1
+
+        media_group_id_start_time = media_group_id_start_count[media_group_id]  # 总共次数
+        media_group_id_end_time = media_group_id_end_count[media_group_id]  # 已经出现次数
+        logger.info(f"总共 {media_group_id_start_time}，已经 {media_group_id_end_time}")
+
+        if media_group_id_start_time == media_group_id_end_time:
+            logger.info(f"{media_group_id_end_time} 个文件全部下载完成")
+            reply_text = f"{media_group_id_end_time} 个文件全部下载完成\n\n<a href='{link_url}'>文件链接</a>"
+            send_reply(chat_id, message_id, reply_text, time_sleep, link_url)
+    else:
+        logger.info(f"文件 {file_name_with_size} 下载完成")
+        reply_text = f"文件 {file_name_with_size} 下载完成\n\n<a href='{link_url}'>文件链接</a>"
+        send_reply(chat_id, message_id, reply_text, time_sleep, link_url)
+
 def download_media_file(file_id, file_name, file_type, caption, message_id, chat_id, media_group_id):
-    #print(threading.current_thread().getName(), 'Starting')
     get_file_url = f"{api_base_url}{bot_token}/getFile"
     params = {"file_id": file_id}
 
@@ -180,8 +151,7 @@ def download_media_file(file_id, file_name, file_type, caption, message_id, chat
     if file_info["ok"]:
         file_path = file_info["result"]["file_path"]
         file_size = file_info["result"]["file_size"]
-        file_url = f"{api_base_url}{bot_token}/{file_path}"
-        download_file(file_url, file_type, file_name, caption, file_path, message_id, chat_id, media_group_id, file_size)
+        download_file(file_info["result"]["file_path"], file_type, file_name, caption, file_path, message_id, chat_id, media_group_id, file_size)
     else:
         logger.error("获取文件信息失败。")
 
@@ -192,7 +162,7 @@ def process_message(message, media_group_captions, caption, media_group_id):
     # 将caption传递给同一media_group_id的其他文件
     if media_group_id and media_group_id in media_group_captions:
         caption = media_group_captions[media_group_id]
-    
+
     # 检查用户是否在允许的用户ID列表中
     if chat_id not in allowed_user_ids:
         logger.info(f"未经授权的用户：{chat_id}")
@@ -204,7 +174,6 @@ def process_message(message, media_group_captions, caption, media_group_id):
         file_id = photo["file_id"]
         file_name = photo.get("file_name", "photo")
         logger.info(f"收到照片消息，开始下载：{file_name}")
-        # download_media_file(file_id, file_name, "photos",caption, message_id, chat_id, media_group_id)
         pool.submit(download_media_file, file_id, file_name, "photos", caption, message_id, chat_id, media_group_id)
 
     if "document" in message:
@@ -213,7 +182,6 @@ def process_message(message, media_group_captions, caption, media_group_id):
         file_id = document["file_id"]
         file_name = document.get("file_name", "document")
         logger.info(f"收到文档消息，开始下载：{file_name}")
-        # download_media_file(file_id, file_name, "documents",caption, message_id, chat_id, media_group_id)
         pool.submit(download_media_file, file_id, file_name, "documents", caption, message_id, chat_id, media_group_id)
 
     if "video" in message:
@@ -222,12 +190,7 @@ def process_message(message, media_group_captions, caption, media_group_id):
         file_id = video["file_id"]
         file_name = video.get("file_name", "video")
         logger.info(f"收到视频消息，开始下载：{file_name}")
-        #download_media_file(file_id, file_name, "videos",caption, message_id, chat_id, media_group_id)
-        #thread = threading.Thread(target=download_media_file, args=(file_id, file_name, "videos", caption, message_id, chat_id, media_group_id))
-        #thread.start()
-        
-        # 提交任务给线程池后台执行
-        pool.submit(download_media_file, file_id, file_name, "videos", caption, message_id, chat_id, media_group_id) 
+        pool.submit(download_media_file, file_id, file_name, "videos", caption, message_id, chat_id, media_group_id)
 
     if "audio" in message:
         # 处理音频
@@ -244,10 +207,10 @@ def process_message(message, media_group_captions, caption, media_group_id):
         #if (text.startswith("/ping") or text.startswith("/start")) and len(text) == 5:
         if (text.startswith("/ping") and len(text) == 5) or (text.startswith("/start") and len(text) == 6):
         #if text.startswith("/ping") and len(text) == 5:
-            # 如果消息以 /ping 开头，回复 Pong! 🏓
+            # 如果消息以 /ping 开头，回复 欢迎回到书库，随时供您差遣
             link_url = None
             time_sleep = 2
-            send_reply(chat_id, message_id, "Pong! 🏓", time_sleep, link_url)
+            send_reply(chat_id, message_id, "欢迎回到书库，随时供您差遣", time_sleep, link_url)
 
             #删除回复的消息
             thread = threading.Thread(target=delete_latest_message, args=(chat_id, message_id, time_sleep))
@@ -381,4 +344,3 @@ def main():
 if __name__ == "__main__":
     create_directory(download_path)
     main()
-
